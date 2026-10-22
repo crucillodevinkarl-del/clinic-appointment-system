@@ -138,8 +138,9 @@ const save = () => {
 };
 let U = null,
   pg = "",
-  role = "admin",
   err = "",
+  authMode = "login",
+  recoveryMode = false,
   filt = { q: "", st: "" },
   ps = null,
   cv = null;
@@ -177,15 +178,6 @@ const ensure = (sid, name) => {
     em: "",
   };
 };
-const ACC = {
-  admin: { u: "admin", p: "admin123", name: "Clinic Staff" },
-  student: {
-    u: "student",
-    p: "student123",
-    name: "Juan Dela Cruz",
-    sid: "2022-00123",
-  },
-};
 const MENU = {
   admin: [
     ["dash", "Dashboard"],
@@ -213,7 +205,7 @@ const go = (p) => {
 function render() {
   // Render the login screen or the shared shell and currently selected page.
   $("#hb").innerHTML = U
-    ? "<button onclick=\"U=null;pg='';render()\">Log out</button>"
+    ? '<button onclick="logout()">Log out</button>'
     : "";
   if (!U) {
     $("#app").innerHTML = `<div class="wrap">
@@ -221,20 +213,17 @@ function render() {
           <div class="login box">
             <div class="login-intro">
               <span class="login-kicker">CAMPUS HEALTH SERVICES</span>
-              <h2>Clinic Sign in</h2>
-              <p>Faster and easier access to clinic for the Unibersidad de Manila Students.</p>
+              <h2>${authMode == "login" ? "Clinic Sign in" : authMode == "signup" ? "Create a student account" : authMode == "reset" ? "Reset your password" : "Choose a new password"}</h2>
+              <p>${authMode == "login" ? "Sign in with your registered email and password." : authMode == "signup" ? "Register with your student details. Staff accounts are created separately." : authMode == "reset" ? "We’ll email you a secure password reset link." : "Enter a new password for your account."}</p>
             </div>
-            <div class="tabs">
-              <button class="${role == "admin" ? "on" : ""}" onclick="setRole('admin')">Clinic Staff</button>
-              <button class="${role == "student" ? "on" : ""}" onclick="setRole('student')">Student</button>
-            </div>
-            <label>Username</label>
-            <input id="lu">
-            <label>Password</label>
-            <input id="lp" type="password" onkeydown="if(event.key=='Enter')login()">
+            ${authMode == "signup" ? '<label>Full name</label><input id="an" autocomplete="name">' : ""}
+            ${authMode == "signup" ? '<label>Student number</label><input id="as" autocomplete="off">' : ""}
+            ${authMode != "update-password" ? '<label>Email</label><input id="lu" type="email" autocomplete="email">' : ""}
+            ${authMode != "reset" ? `<label>${authMode == "update-password" ? "New password" : "Password"}</label>
+            <div class="password-field"><input id="lp" type="password" autocomplete="${authMode == "login" ? "current-password" : "new-password"}" onkeydown="if(event.key=='Enter')${authMode == "login" ? "login()" : authMode == "signup" ? "registerAccount()" : authMode == "reset" ? "sendPasswordReset()" : "updatePassword()"}">${["login", "signup"].includes(authMode) ? '<button class="btn gray password-toggle" type="button" aria-label="Show password" aria-pressed="false" onclick="togglePasswordVisibility(this)">Show</button>' : ""}</div>` : ""}
             <div class="err">${esc(err)}</div>
-            <p><button class="btn" style="width:100%" onclick="login()">Log in</button></p>
-            <div class="hint">Demo accounts:<br>Staff – admin / admin123<br>Student – student / student123</div>
+            <p><button class="btn" style="width:100%" onclick="${authMode == "login" ? "login()" : authMode == "signup" ? "registerAccount()" : authMode == "reset" ? "sendPasswordReset()" : "updatePassword()"}">${authMode == "login" ? "Log in" : authMode == "signup" ? "Create account" : authMode == "reset" ? "Email reset link" : "Save new password"}</button></p>
+            <div class="hint">${authMode == "login" ? 'Forgot password? <a href="#" onclick="setAuthMode(\'reset\');return false">Reset it</a><br>New student? <a href="#" onclick="setAuthMode(\'signup\');return false">Create an account</a>' : authMode == "signup" ? 'Already registered? <a href="#" onclick="setAuthMode(\'login\');return false">Sign in</a>' : authMode == "update-password" ? "" : 'Back to <a href="#" onclick="setAuthMode(\'login\');return false">sign in</a>'}</div>
           </div>
         </main>
       </div>`;
@@ -246,23 +235,198 @@ function render() {
   $("#mn").innerHTML = PAGES[pg]();
   if (pg == "appts") tbl();
 }
-function setRole(r) {
-  role = r;
+function setAuthMode(mode) {
+  authMode = mode;
   err = "";
   render();
 }
-function login() {
-  const a = ACC[role];
-  if (v("lu") == a.u && $("#lp").value == a.p) {
-    U = { ...a, role };
-    err = "";
-    pg = "";
-    log(a.name + " logged in");
+function togglePasswordVisibility(button) {
+  const password = $("#lp");
+  const show = password.type == "password";
+  password.type = show ? "text" : "password";
+  button.textContent = show ? "Hide" : "Show";
+  button.setAttribute("aria-label", show ? "Hide password" : "Show password");
+  button.setAttribute("aria-pressed", String(show));
+}
+async function sendPasswordReset() {
+  err = "";
+  if (!window.supabaseClient) {
+    err = "Supabase is not connected. Check the Supabase scripts and configuration.";
     render();
-  } else {
-    err = "Invalid username or password.";
+    return;
+  }
+  const email = v("lu");
+  if (!email) {
+    err = "Enter the email address you used to create your account.";
+    render();
+    return;
+  }
+  if (!["http:", "https:"].includes(window.location.protocol)) {
+    err = "Open this app through a local web server (such as VS Code Live Server) before requesting a reset.";
+    render();
+    return;
+  }
+  const redirectTo = `${window.location.origin}${window.location.pathname}${window.location.search}`;
+  const { error } = await window.supabaseClient.auth.resetPasswordForEmail(email, { redirectTo });
+  if (error) {
+    err = error.message;
+    render();
+    return;
+  }
+  err = "If an account exists for that email, a password reset link has been sent.";
+  render();
+}
+async function updatePassword() {
+  err = "";
+  const password = $("#lp").value;
+  if (password.length < 8) {
+    err = "Choose a password with at least 8 characters.";
+    render();
+    return;
+  }
+  const { error } = await window.supabaseClient.auth.updateUser({ password });
+  if (error) {
+    err = error.message;
+    render();
+    return;
+  }
+  const { error: signOutError } = await window.supabaseClient.auth.signOut();
+  if (signOutError) {
+    err = `Password changed, but sign-out failed: ${signOutError.message}`;
+    render();
+    return;
+  }
+  recoveryMode = false;
+  authMode = "login";
+  err = "Password updated. Sign in with your new password.";
+  render();
+}
+async function applyAuthUser(authUser) {
+  const { data: profile, error } = await window.supabaseClient
+    .from("profiles")
+    .select("full_name, student_no, role")
+    .eq("id", authUser.id)
+    .single();
+  if (error) {
+    err = `Could not load your account profile: ${error.message}`;
+    U = null;
+    const { error: signOutError } = await window.supabaseClient.auth.signOut();
+    if (signOutError) err += ` Sign-out also failed: ${signOutError.message}`;
+    render();
+    return false;
+  }
+  if (!["student", "staff"].includes(profile.role) || (profile.role == "student" && !profile.student_no)) {
+    err = "Your account profile is incomplete. Contact clinic staff for help.";
+    U = null;
+    const { error: signOutError } = await window.supabaseClient.auth.signOut();
+    if (signOutError) err += ` Sign-out also failed: ${signOutError.message}`;
+    render();
+    return false;
+  }
+  U = {
+    id: authUser.id,
+    name: profile.full_name || authUser.email,
+    sid: profile.student_no || "",
+    role: profile.role == "staff" ? "admin" : "student",
+  };
+  err = "";
+  pg = "";
+  render();
+  return true;
+}
+async function login() {
+  err = "";
+  if (!window.supabaseClient) {
+    err = "Supabase is not connected. Check the Supabase scripts and configuration.";
+    render();
+    return;
+  }
+  const { data, error } = await window.supabaseClient.auth.signInWithPassword({
+    email: v("lu"),
+    password: $("#lp").value,
+  });
+  if (error) {
+    err = error.message;
+    render();
+    return;
+  }
+  await applyAuthUser(data.user);
+}
+async function registerAccount() {
+  err = "";
+  if (!window.supabaseClient) {
+    err = "Supabase is not connected. Check the Supabase scripts and configuration.";
+    render();
+    return;
+  }
+  if (!v("an") || !v("as") || !v("lu") || !$("#lp").value) {
+    err = "Enter your name, student number, email, and password.";
+    render();
+    return;
+  }
+  const { data, error } = await window.supabaseClient.auth.signUp({
+    email: v("lu"),
+    password: $("#lp").value,
+    options: {
+      data: { full_name: v("an"), student_no: v("as") },
+    },
+  });
+  if (error) {
+    err = error.message;
+    render();
+    return;
+  }
+  if (data.session) {
+    await applyAuthUser(data.user);
+    return;
+  }
+  err = "Account created. Check your email to confirm it, then sign in.";
+  authMode = "login";
+  render();
+}
+async function logout() {
+  const { error } = await window.supabaseClient.auth.signOut();
+  if (error) {
+    err = `Could not sign out: ${error.message}`;
+    render();
+    return;
+  }
+  U = null;
+  pg = "";
+  err = "";
+  render();
+}
+async function initializeAuth() {
+  if (!window.supabaseClient) {
+    err = "Supabase is not connected. Check the Supabase scripts and configuration.";
+    render();
+    return;
+  }
+  if (new URLSearchParams(window.location.hash.slice(1)).get("type") == "recovery") {
+    recoveryMode = true;
+    authMode = "update-password";
     render();
   }
+  window.supabaseClient.auth.onAuthStateChange((event) => {
+    if (event == "SIGNED_OUT") {
+      U = null;
+      pg = "";
+      render();
+    } else if (event == "PASSWORD_RECOVERY") {
+      recoveryMode = true;
+      authMode = "update-password";
+      U = null;
+      err = "";
+      render();
+    }
+  });
+  const { data, error } = await window.supabaseClient.auth.getSession();
+  if (error) {
+    err = `Could not restore your sign-in: ${error.message}`;
+    render();
+    return;
+  }
+  if (data.session && !recoveryMode) await applyAuthUser(data.session.user);
 }
 const medSt = (m) =>
   m.exp < today()
@@ -356,13 +520,13 @@ const PAGES = {
   },
   certs() {
     const c = cv && S.certs.find((x) => x.id == cv);
-    return `<h2>Medical Certificates</h2>${c ? `<div class="cert" id="cert"><h3>UNIBERSIDAD DE MANILA — UNIVERSITY HEALTH CLINIC<br>MEDICAL CERTIFICATE</h3><p>Date: ${c.date}</p><p>This is to certify that <b>${esc(c.name)}</b> (${esc(c.sid)}) was examined at the University Health Clinic and is hereby issued a <b>${esc(c.type)}</b>${c.days ? ` for <b>${c.days}</b> day(s)` : ""}.</p><p>Remarks: ${esc(c.note || "—")}</p><p style="margin-top:36px">______________________<br>Attending clinic staff</p></div><p><button class="btn" onclick="window.print()">Print</button> <button class="btn gray" onclick="cv=null;go('certs')">Close</button></p>` : ""}
+    return `<h2>Medical Certificates</h2>${c ? `<div class="cert" id="cert"><h3>UNIVERSIDAD DE MANILA — UNIVERSITY HEALTH CLINIC<br>MEDICAL CERTIFICATE</h3><p>Date: ${c.date}</p><p>This is to certify that <b>${esc(c.name)}</b> (${esc(c.sid)}) was examined at the University Health Clinic and is hereby issued a <b>${esc(c.type)}</b>${c.days ? ` for <b>${c.days}</b> day(s)` : ""}.</p><p>Remarks: ${esc(c.note || "—")}</p><p style="margin-top:36px">______________________<br>Attending clinic staff</p></div><p><button class="btn" onclick="window.print()">Print</button> <button class="btn gray" onclick="cv=null;go('certs')">Close</button></p>` : ""}
  <div class="box"><div class="row"><input id="cn" placeholder="Student name"><input id="cs" placeholder="Student no."><select id="ct">${opts(["Fit to Study / Clearance", "Medical Excuse (Rest)", "Dental Clearance", "Fit for OJT / Sports"])}</select><input id="cd" type="number" min="0" placeholder="Days of rest" class="n" style="max-width:130px"></div><div class="row"><input id="cr" placeholder="Remarks"><button class="btn n" onclick="addCert()">Issue certificate</button></div></div>
  <div class="tw"><table><tr><th>Date</th><th>Student</th><th>Type</th><th></th></tr>${S.certs.map((x) => `<tr><td>${x.date}</td><td>${esc(x.name)}</td><td>${esc(x.type)}</td><td><button class="btn sm" onclick="cv=${x.id};go('certs')">View / Print</button></td></tr>`).join("") || '<tr><td colspan="4">None issued yet.</td></tr>'}</table></div>`;
   },
   book() {
     const st = U.role == "student";
-    return `<h2>${st ? "Book a Clinic Appointment" : "New Booking"}</h2><div class="alert"><b>Emergency?</b> Do not book online — go to the clinic right away or ask someone nearby to call for emergency help.</div><div class="box"><div class="row"><input id="bn" placeholder="Student name" value="${st ? esc(U.name) : ""}"><input id="bs" placeholder="Student no." value="${st ? U.sid : ""}"></div>
+    return `<h2>${st ? "Book a Clinic Appointment" : "New Booking"}</h2><div class="alert"><b>Emergency?</b> Do not book online — go to the clinic right away or ask someone nearby to call for emergency help.</div><div class="box"><div class="row"><input id="bn" placeholder="Student name" value="${st ? esc(U.name) : ""}"><input id="bs" placeholder="Student no." value="${st ? esc(U.sid) : ""}"></div>
  <div class="row"><select id="bv">${opts(S.services.map((x) => x.n))}</select><input id="bd" type="date" min="${today()}" value="${today()}"><select id="bt">${opts(SLOTS)}</select><select id="bu"><option>Normal</option><option>Urgent</option></select></div>
  <label>Symptoms / reason for visit</label><textarea id="bp" rows="3"></textarea><p><button class="btn" onclick="addAppt()">Submit appointment</button></p></div>`;
   },
@@ -606,3 +770,4 @@ function csv() {
   }
 }
 render();
+initializeAuth();

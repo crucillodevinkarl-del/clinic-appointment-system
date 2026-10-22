@@ -190,6 +190,18 @@ textarea {
   background: #fff;
   color: #222;
 }
+.password-field {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+.password-field input {
+  min-width: 0;
+}
+.password-toggle {
+  flex: none;
+  margin: 0;
+}
 label {
   font-size: 12px;
   font-weight: 600;
