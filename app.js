@@ -141,6 +141,9 @@ let U = null,
   err = "",
   authMode = "login",
   recoveryMode = false,
+  pendingVerificationEmail = "",
+  loginOtpEmail = "",
+  loginAudience = "student",
   filt = { q: "", st: "" },
   ps = null,
   cv = null;
@@ -211,19 +214,20 @@ function render() {
     $("#app").innerHTML = `<div class="wrap">
         <main>
           <div class="login box">
+            ${authMode == "login" || authMode == "verify-login" ? `<div class="tabs" aria-label="Login type"><button class="${loginAudience == "student" ? "on" : ""}" type="button" onclick="setLoginAudience('student')">Student</button><button class="${loginAudience == "staff" ? "on" : ""}" type="button" onclick="setLoginAudience('staff')">Clinic Staff</button></div>` : ""}
             <div class="login-intro">
               <span class="login-kicker">CAMPUS HEALTH SERVICES</span>
-              <h2>${authMode == "login" ? "Clinic Sign in" : authMode == "signup" ? "Create a student account" : authMode == "reset" ? "Reset your password" : "Choose a new password"}</h2>
-              <p>${authMode == "login" ? "Sign in with your registered email and password." : authMode == "signup" ? "Register with your student details. Staff accounts are created separately." : authMode == "reset" ? "We’ll email you a secure password reset link." : "Enter a new password for your account."}</p>
+              <h2>${authMode == "login" ? "Clinic Sign in" : authMode == "signup" ? "Create a student account" : authMode == "reset" ? "Reset your password" : authMode == "verify-login" ? "Verify your sign-in" : "Choose a new password"}</h2>
+              <p>${authMode == "login" ? "Enter your email and password to receive a one-time sign-in code." : authMode == "signup" ? "Register with your student details. Staff accounts are created separately." : authMode == "reset" ? "We’ll email you a secure password reset link." : authMode == "verify-login" ? `Enter the 6-digit code sent to ${esc(loginOtpEmail)}.` : "Enter a new password for your account."}</p>
             </div>
             ${authMode == "signup" ? '<label>Full name</label><input id="an" autocomplete="name">' : ""}
             ${authMode == "signup" ? '<label>Student number</label><input id="as" autocomplete="off">' : ""}
-            ${authMode != "update-password" ? '<label>Email</label><input id="lu" type="email" autocomplete="email">' : ""}
-            ${authMode != "reset" ? `<label>${authMode == "update-password" ? "New password" : "Password"}</label>
-            <div class="password-field"><input id="lp" type="password" autocomplete="${authMode == "login" ? "current-password" : "new-password"}" onkeydown="if(event.key=='Enter')${authMode == "login" ? "login()" : authMode == "signup" ? "registerAccount()" : authMode == "reset" ? "sendPasswordReset()" : "updatePassword()"}">${["login", "signup"].includes(authMode) ? '<button class="btn gray password-toggle" type="button" aria-label="Show password" aria-pressed="false" onclick="togglePasswordVisibility(this)">Show</button>' : ""}</div>` : ""}
+            ${authMode == "verify-login" ? '<label>6-digit code</label><input id="lotp" inputmode="numeric" autocomplete="one-time-code" maxlength="6">' : authMode != "update-password" ? '<label>Email</label><input id="lu" type="email" autocomplete="email">' : ""}
+            ${["login", "signup"].includes(authMode) ? `<label>Password</label>
+            <div class="password-field"><input id="lp" type="password" autocomplete="${authMode == "login" ? "current-password" : "new-password"}" onkeydown="if(event.key=='Enter')${authMode == "login" ? "login()" : "registerAccount()"}">${authMode == "login" || authMode == "signup" ? '<button class="btn gray password-toggle" type="button" aria-label="Show password" aria-pressed="false" onclick="togglePasswordVisibility(this)">Show</button>' : ""}</div>` : authMode == "update-password" ? '<label>New password</label><div class="password-field"><input id="lp" type="password" autocomplete="new-password"></div>' : ""}
             <div class="err">${esc(err)}</div>
-            <p><button class="btn" style="width:100%" onclick="${authMode == "login" ? "login()" : authMode == "signup" ? "registerAccount()" : authMode == "reset" ? "sendPasswordReset()" : "updatePassword()"}">${authMode == "login" ? "Log in" : authMode == "signup" ? "Create account" : authMode == "reset" ? "Email reset link" : "Save new password"}</button></p>
-            <div class="hint">${authMode == "login" ? 'Forgot password? <a href="#" onclick="setAuthMode(\'reset\');return false">Reset it</a><br>New student? <a href="#" onclick="setAuthMode(\'signup\');return false">Create an account</a>' : authMode == "signup" ? 'Already registered? <a href="#" onclick="setAuthMode(\'login\');return false">Sign in</a>' : authMode == "update-password" ? "" : 'Back to <a href="#" onclick="setAuthMode(\'login\');return false">sign in</a>'}</div>
+            <p><button class="btn" style="width:100%" onclick="${authMode == "login" ? "login()" : authMode == "signup" ? "registerAccount()" : authMode == "reset" ? "sendPasswordReset()" : authMode == "verify-login" ? "verifyLoginOtp()" : "updatePassword()"}">${authMode == "login" ? "Send sign-in code" : authMode == "signup" ? "Create account" : authMode == "reset" ? "Email reset link" : authMode == "verify-login" ? "Verify and sign in" : "Save new password"}</button></p>
+            <div class="hint">${authMode == "login" ? `<a href="#" onclick="setAuthMode('reset');return false">Forgot password?</a>${loginAudience == "student" ? '<br>New student? <a href="#" onclick="setAuthMode(\'signup\');return false">Create an account</a>' : ""}${pendingVerificationEmail ? '<br><a href="#" onclick="resendVerification();return false">Resend verification email</a>' : ""}` : authMode == "signup" ? 'Already registered? <a href="#" onclick="setAuthMode(\'login\');return false">Sign in</a>' : authMode == "verify-login" ? `<a href="#" onclick="resendLoginOtp();return false">Send a new code</a><br><a href="#" onclick="setAuthMode('login');return false">Use a different email</a>` : authMode == "update-password" ? "" : 'Back to <a href="#" onclick="setAuthMode(\'login\');return false">sign in</a>'}</div>
           </div>
         </main>
       </div>`;
@@ -237,6 +241,12 @@ function render() {
 }
 function setAuthMode(mode) {
   authMode = mode;
+  err = "";
+  render();
+}
+function setLoginAudience(audience) {
+  if (!["student", "staff"].includes(audience)) return;
+  loginAudience = audience;
   err = "";
   render();
 }
@@ -276,6 +286,46 @@ async function sendPasswordReset() {
   err = "If an account exists for that email, a password reset link has been sent.";
   render();
 }
+async function resendVerification() {
+  err = "";
+  const email = pendingVerificationEmail || v("lu");
+  if (!email) {
+    err = "Enter the email address you want to verify.";
+    render();
+    return;
+  }
+  const redirectTo = `${window.location.origin}${window.location.pathname}${window.location.search}`;
+  const { error } = await window.supabaseClient.auth.resend({
+    type: "signup",
+    email,
+    options: { emailRedirectTo: redirectTo },
+  });
+  if (error) {
+    err = error.message;
+  } else {
+    err = "A new verification email has been sent.";
+    pendingVerificationEmail = email;
+  }
+  render();
+}
+async function resendLoginOtp() {
+  err = "";
+  if (!loginOtpEmail) {
+    err = "The sign-in email is missing. Start again.";
+    render();
+    return;
+  }
+  const redirectTo = `${window.location.origin}${window.location.pathname}${window.location.search}`;
+  const { error } = await window.supabaseClient.auth.signInWithOtp({
+    email: loginOtpEmail,
+    options: {
+      emailRedirectTo: redirectTo,
+      shouldCreateUser: false,
+    },
+  });
+  err = error ? error.message : "A new sign-in code has been sent.";
+  render();
+}
 async function updatePassword() {
   err = "";
   const password = $("#lp").value;
@@ -301,7 +351,7 @@ async function updatePassword() {
   err = "Password updated. Sign in with your new password.";
   render();
 }
-async function applyAuthUser(authUser) {
+async function applyAuthUser(authUser, enforceLoginAudience = false) {
   const { data: profile, error } = await window.supabaseClient
     .from("profiles")
     .select("full_name, student_no, role")
@@ -312,6 +362,15 @@ async function applyAuthUser(authUser) {
     U = null;
     const { error: signOutError } = await window.supabaseClient.auth.signOut();
     if (signOutError) err += ` Sign-out also failed: ${signOutError.message}`;
+    render();
+    return false;
+  }
+  if (enforceLoginAudience && profile.role != loginAudience) {
+    err = loginAudience == "staff"
+      ? "This account is not a clinic staff account."
+      : "Clinic staff accounts must use the Clinic Staff tab.";
+    U = null;
+    await window.supabaseClient.auth.signOut();
     render();
     return false;
   }
@@ -341,16 +400,104 @@ async function login() {
     render();
     return;
   }
-  const { data, error } = await window.supabaseClient.auth.signInWithPassword({
-    email: v("lu"),
-    password: $("#lp").value,
-  });
+  const email = v("lu");
+  const password = $("#lp")?.value;
+  if (!email || !password) {
+    err = "Enter your registered email and password.";
+    render();
+    return;
+  }
+  const { data, error } = await window.supabaseClient.auth.signInWithPassword({ email, password });
   if (error) {
     err = error.message;
     render();
     return;
   }
-  await applyAuthUser(data.user);
+  if (!data.user.email_confirmed_at) {
+    err = "Verify your email address before signing in.";
+    pendingVerificationEmail = email;
+    await window.supabaseClient.auth.signOut();
+    render();
+    return;
+  }
+  const { data: profile, error: profileError } = await window.supabaseClient
+    .from("profiles")
+    .select("role")
+    .eq("id", data.user.id)
+    .single();
+  if (profileError) {
+    err = "Could not verify this account type.";
+    await window.supabaseClient.auth.signOut();
+    render();
+    return;
+  }
+  if (profile.role != loginAudience) {
+    err = loginAudience == "staff"
+      ? "This account is not a clinic staff account."
+      : "Clinic staff accounts must use the Clinic Staff tab.";
+    await window.supabaseClient.auth.signOut();
+    render();
+    return;
+  }
+  const signOutResult = await window.supabaseClient.auth.signOut();
+  if (signOutResult.error) {
+    err = `Could not prepare email verification: ${signOutResult.error.message}`;
+    render();
+    return;
+  }
+  const redirectTo = `${window.location.origin}${window.location.pathname}${window.location.search}`;
+  const { error: otpError } = await window.supabaseClient.auth.signInWithOtp({
+    email,
+    options: {
+      emailRedirectTo: redirectTo,
+      shouldCreateUser: false,
+    },
+  });
+  if (otpError) {
+    err = otpError.message;
+    render();
+    return;
+  }
+  loginOtpEmail = email;
+  pendingVerificationEmail = "";
+  authMode = "verify-login";
+  err = "Password accepted. Sign-in code sent to your email.";
+  render();
+}
+async function verifyLoginOtp() {
+  err = "";
+  const token = $("#lotp")?.value.trim();
+  if (!/^\d{6}$/.test(token)) {
+    err = "Enter the 6-digit sign-in code.";
+    render();
+    return;
+  }
+  let result = await window.supabaseClient.auth.verifyOtp({
+    email: loginOtpEmail,
+    token,
+    type: "email",
+  });
+  if (result.error?.message == "Token has expired or is invalid") {
+    result = await window.supabaseClient.auth.verifyOtp({
+      email: loginOtpEmail,
+      token,
+      type: "magiclink",
+    });
+  }
+  const { data, error } = result;
+  if (error) {
+    err = error.message;
+    render();
+    return;
+  }
+  if (!data.user.email_confirmed_at) {
+    err = "Your email is not verified. Use the verification link first.";
+    await window.supabaseClient.auth.signOut();
+    render();
+    return;
+  }
+  loginOtpEmail = "";
+  await applyAuthUser(data.user, true);
 }
 async function registerAccount() {
   err = "";
@@ -368,6 +515,7 @@ async function registerAccount() {
     email: v("lu"),
     password: $("#lp").value,
     options: {
+      emailRedirectTo: `${window.location.origin}${window.location.pathname}${window.location.search}`,
       data: { full_name: v("an"), student_no: v("as") },
     },
   });
@@ -380,7 +528,8 @@ async function registerAccount() {
     await applyAuthUser(data.user);
     return;
   }
-  err = "Account created. Check your email to confirm it, then sign in.";
+  pendingVerificationEmail = v("lu");
+  err = "Account created. Check your email to verify it, then sign in.";
   authMode = "login";
   render();
 }
@@ -426,7 +575,16 @@ async function initializeAuth() {
     render();
     return;
   }
-  if (data.session && !recoveryMode) await applyAuthUser(data.session.user);
+  if (data.session && !recoveryMode) {
+    if (!data.session.user.email_confirmed_at) {
+      pendingVerificationEmail = data.session.user.email;
+      err = "Verify your email address before accessing the clinic portal.";
+      await window.supabaseClient.auth.signOut();
+      render();
+      return;
+    }
+    await applyAuthUser(data.session.user);
+  }
 }
 const medSt = (m) =>
   m.exp < today()
